@@ -18,6 +18,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset, Subset
 
 from vae import VAE, vae_loss
+from experiments import refresh_catalog
 
 
 class Xrays(Dataset):
@@ -82,12 +83,24 @@ def plot_history(rows, path):
     plt.close(fig)
 
 
+def save_checkpoint(checkpoint, path):
+    # An interruption during serialization must not destroy the previous checkpoint.
+    temporary = path.with_suffix('.pt.tmp')
+    torch.save(checkpoint, temporary)
+    temporary.replace(path)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--data', type=Path, default=Path('chest_xray'))
-    parser.add_argument('--out', type=Path, default=Path('runs/baseline'))
+    parser.add_argument('--out', type=Path, help='Fresh run directory; on resume defaults to checkpoint directory')
+    parser.add_argument('--resume', type=Path, help='Continue from a checkpoint; --epochs is the total target')
     parser.add_argument('--image-size', type=int, default=64)
     parser.add_argument('--latent-dim', type=int, default=32)
+    parser.add_argument('--depth', type=int, choices=[2, 3, 4, 5], default=4,
+                        help='Number of stride-2 encoder blocks; decoder mirrors them')
+    parser.add_argument('--base-channels', type=int, default=16,
+                        help='First hidden channel count; doubles at each encoder block')
     parser.add_argument('--batch-size', type=int, default=32)
     parser.add_argument('--epochs', type=int, default=30)
     parser.add_argument('--lr', type=float, default=1e-3)
@@ -98,10 +111,52 @@ def main():
     parser.add_argument('--limit', type=int, default=0, help='Random training subset for debugging; 0 means all')
     parser.add_argument('--inspect', action='store_true', help='Save real images and verify forward/backward only')
     args = parser.parse_args()
+    checkpoint = None
+    history = []
+    if args.resume:
+        if args.inspect:
+            parser.error('--resume cannot be combined with --inspect')
+        if not args.resume.is_file():
+            parser.error(f'Checkpoint not found: {args.resume}')
+        checkpoint = torch.load(args.resume, map_location='cpu', weights_only=True)
+        # Inherit the original experiment settings, rather than silently using defaults.
+        inherited = ('data', 'image_size', 'latent_dim', 'batch_size', 'lr', 'beta', 'seed', 'limit',
+                     'depth', 'base_channels')
+        parser.set_defaults(**{key: checkpoint['config'].get(key, parser.get_default(key))
+                               for key in (*inherited, 'workers', 'threads')})
+        args = parser.parse_args()
+        for key in inherited[1:]:
+            if getattr(args, key) != checkpoint['config'].get(key, {'depth': 4, 'base_channels': 16}.get(key)):
+                parser.error(f'Cannot change --{key.replace("_", "-")} when resuming this experiment')
+        if args.epochs <= checkpoint['epoch']:
+            parser.error(f'Checkpoint completed epoch {checkpoint["epoch"]}; --epochs must be larger')
+        history = checkpoint.get('history', [])
+        if not history:
+            # Compatibility with checkpoints created before resume support.
+            history_path = args.resume.parent / 'history.csv'
+            if not history_path.is_file():
+                parser.error('Legacy checkpoint requires its history.csv alongside it')
+            with history_path.open(newline='', encoding='utf-8') as f:
+                history = [{k: int(v) if k == 'epoch' else float(v) for k, v in row.items()}
+                           for row in csv.DictReader(f)]
+        history = [row for row in history if row['epoch'] <= checkpoint['epoch']]
+        if not history or history[-1]['epoch'] != checkpoint['epoch']:
+            parser.error('Loss history does not cover the checkpoint epoch')
+    args.data = Path(args.data)
+    args.out = args.out or (args.resume.parent if args.resume else Path('runs/baseline'))
     if min(args.epochs, args.batch_size, args.latent_dim, args.threads) <= 0 or args.limit < 0:
         parser.error('epochs, batch size, latent dimension, threads must be positive; limit must be nonnegative')
+    if args.base_channels < 1 or args.image_size < 32 or args.image_size % (2 ** args.depth) or args.image_size // (2 ** args.depth) < 2:
+        parser.error('Invalid architecture: positive channels, image size >=32 divisible by 2**depth, final spatial size >=2 required')
     if args.out.exists() and any(args.out.iterdir()):
-        parser.error('Output directory is not empty; choose a new --out to preserve previous results')
+        if not args.resume or args.out.resolve() != args.resume.parent.resolve():
+            parser.error('Output directory is not empty; choose a new --out to preserve previous results')
+        # Reject rollback into an existing run, which could mix results from different epochs.
+        latest_path = args.out / 'last.pt'
+        if latest_path.is_file():
+            latest = torch.load(latest_path, map_location='cpu', weights_only=True)
+            if latest['epoch'] > checkpoint['epoch']:
+                parser.error('A newer last.pt exists; resume it or choose a new --out directory')
     args.out.mkdir(parents=True, exist_ok=True)
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -115,9 +170,12 @@ def main():
         train = Subset(train, indices.tolist())
     train_loader = DataLoader(train, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
     val_loader = DataLoader(val, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
-    model = VAE(args.latent_dim, args.image_size).to(device)
+    model = VAE(args.latent_dim, args.image_size, args.depth, args.base_channels).to(device)
+    if checkpoint:
+        model.load_state_dict(checkpoint['model'])
     config = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()}
-    config.update(device=str(device), torch_version=str(torch.__version__), train_images=len(train), val_images=len(val))
+    config.update(device=str(device), torch_version=str(torch.__version__), train_images=len(train), val_images=len(val),
+                  parameter_count=sum(p.numel() for p in model.parameters()))
     (args.out / 'config.json').write_text(json.dumps(config, indent=2), encoding='utf-8')
     print(f'Device: {device}; train: {len(train)}; val: {len(val)}', flush=True)
     x = next(iter(train_loader)).to(device)
@@ -136,9 +194,28 @@ def main():
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     fixed_z = torch.randn(32, args.latent_dim, device=device)
     fixed_x = next(iter(val_loader))[:8].to(device)
-    history = []
     best = float('inf')
-    for epoch in range(1, args.epochs + 1):
+    start_epoch = 1
+    if checkpoint:
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        start_epoch = checkpoint['epoch'] + 1
+        best = checkpoint.get('best_loss', min(row['val_total'] for row in history))
+        if 'fixed_z' in checkpoint:
+            fixed_z = checkpoint['fixed_z'].to(device)
+        if 'rng_state' in checkpoint:
+            torch.set_rng_state(checkpoint['rng_state'])
+            if device.type == 'cuda' and checkpoint.get('cuda_rng_state') is not None:
+                torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state'])
+        else:
+            print('Legacy checkpoint: weights/optimizer/history restored; original RNG state unavailable.', flush=True)
+        # A fork into a new directory retains the prior best model as well.
+        previous_best = args.resume.parent / 'best.pt'
+        if args.out.resolve() != args.resume.parent.resolve() and previous_best.is_file():
+            old_best = torch.load(previous_best, map_location='cpu', weights_only=True)
+            if old_best['epoch'] <= checkpoint['epoch']:
+                save_checkpoint(old_best, args.out / 'best.pt')
+        print(f'Resuming after epoch {checkpoint["epoch"]}; training through epoch {args.epochs}.', flush=True)
+    for epoch in range(start_epoch, args.epochs + 1):
         train_losses = run_epoch(model, train_loader, device, args.beta, optimizer)
         # Keep validation sampling noise fixed across epochs for easier comparison.
         with torch.random.fork_rng(devices=[device.index or 0] if device.type == 'cuda' else []):
@@ -152,21 +229,26 @@ def main():
             writer = csv.DictWriter(f, fieldnames=list(row))
             writer.writeheader()
             writer.writerows(history)
-        checkpoint = {'model': model.state_dict(), 'config': config, 'epoch': epoch,
-                      'val_loss': val_losses[0], 'optimizer': optimizer.state_dict()}
-        torch.save(checkpoint, args.out / 'last.pt')
-        if val_losses[0] < best:
-            best = val_losses[0]
-            torch.save(checkpoint, args.out / 'best.pt')
+        improved = val_losses[0] < best
+        best = min(best, val_losses[0])
         model.eval()
         with torch.no_grad():
             # NEW samples use only prior z, whereas reconstructions use real images.
             save_grid(model.decode(fixed_z), args.out / f'samples_{epoch:03d}.png')
             mean, _ = model.encode(fixed_x)
             save_grid(torch.cat([fixed_x, model.decode(mean)]), args.out / 'reconstructions.png')
+        checkpoint = {'model': model.state_dict(), 'config': config, 'epoch': epoch,
+                      'val_loss': val_losses[0], 'optimizer': optimizer.state_dict(),
+                      'best_loss': best, 'history': history, 'fixed_z': fixed_z.detach().cpu(),
+                      'rng_state': torch.get_rng_state(),
+                      'cuda_rng_state': torch.cuda.get_rng_state_all() if device.type == 'cuda' else None}
+        if improved:
+            save_checkpoint(checkpoint, args.out / 'best.pt')
+        save_checkpoint(checkpoint, args.out / 'last.pt')
+        plot_history(history, args.out / 'loss_curves.png')
+        refresh_catalog(args.out.parent)
         print(f'Epoch {epoch}/{args.epochs}: train={train_losses[0]:.3f}, val={val_losses[0]:.3f}, '
               f'recon={train_losses[1]:.3f}, KL={train_losses[2]:.3f}', flush=True)
-    plot_history(history, args.out / 'loss_curves.png')
 
 
 if __name__ == '__main__':

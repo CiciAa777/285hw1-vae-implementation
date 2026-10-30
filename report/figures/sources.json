@@ -1,0 +1,56 @@
+[
+  {
+    "run": "cnn128_depth_3",
+    "checkpoint_epoch": 40,
+    "checkpoint_sha256": "1c2ec6e3ae311484b2cef7d9d04f938fda681ed031d485184e34004ea9ed1319",
+    "evaluation_seed": 123,
+    "sample_indices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "fid": 0.21498985453408986,
+    "inception_score": 1.954643217666733
+  },
+  {
+    "run": "res128_beta_0.5",
+    "checkpoint_epoch": 32,
+    "checkpoint_sha256": "888202004ce9a394bdc750170be45ea3ed3b88e532d7dcb6869b1e08b6442a7e",
+    "evaluation_seed": 123,
+    "sample_indices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "fid": 0.24404214687831038,
+    "inception_score": 1.933424391301902
+  },
+  {
+    "run": "cnn128_depth_5",
+    "checkpoint_epoch": 28,
+    "checkpoint_sha256": "8cd9f8211c4252d0f44f97a580842a8b478b67d82ef29f903f0c09dcd7ec1366",
+    "evaluation_seed": 123,
+    "sample_indices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "fid": 0.2785127075210471,
+    "inception_score": 1.967464908073996
+  }
+]

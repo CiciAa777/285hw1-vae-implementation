@@ -1,0 +1,5 @@
+# Install only when evaluating; keep Torchvision compatible with your PyTorch build.
+-r requirements.txt
+torchvision>=0.17
+pytorch-ignite>=0.5.2,<0.6
+scipy>=1.11

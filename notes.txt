@@ -1,0 +1,64 @@
+1. python train.py --epochs 30 --out runs/baseline\
+Device: cpu; train: 5216; val: 16
+x: (32, 1, 64, 64); mu/logvar: (32, 32); reconstruction: (32, 1, 64, 64)
+Epoch 23/30: train=37.461, val=36.935, recon=24.787, KL=12.674
+FID = 0.235111; Inception Score = 1.497146 (fixed-reference v2)
+Historical v1 FID = 0.15535; not directly comparable with v2 FID.
+
+2. python sweep.py --parameter image-size --values 128 --epochs 40
+"E:\UCSD\ece\285 deep\hw1\.venv\Scripts\python.exe" train.py --epochs30 --out runs\sweep_image-size_128 --image-size 128
+Device: cpu; train: 5216; val: 16
+x: (32, 1, 128, 128); mu/logvar: (32, 32); reconstruction: (32, 1, 128, 128)
+Epoch 38/40: train=99.143, val=99.543, recon=66.916, KL=32.227
+FID = 0.246205; Inception Score = 1.839638 (fixed-reference v2)
+Historical v1 FID = 0.170906; not directly comparable with v2 FID.
+
+3. python.exe" train.py --image-size 128 --epochs 40 --out runs\res128_latent-dim_64 --latent-dim 64
+Device: cpu; train: 5216; val: 16
+x: (32, 1, 128, 128); mu/logvar: (32, 64); reconstruction: (32, 1, 128, 128)
+Epoch 38/40: train=101.177, val=99.687, recon=69.264, KL=31.913
+FID = 0.245921; Inception Score = 1.872313 (fixed-reference v2)
+Historical v1 FID = 0.171998; not directly comparable with v2 FID.
+
+4. python sweep.py --parameter beta --values 0.5 2 --image-size 128 --latent-dim 32 --epochs 40 --prefix res128
+Epoch 32/40: train=80.643, val=81.466, recon=57.412, KL=46.463
+FID = 0.244042; Inception Score = 1.933424 (fixed-reference v2)
+Historical v1 FID = 0.168442; not directly comparable with v2 FID.
+
+5. python.exe" train.py --image-size 128 --latent-dim 32 --epochs 40 --out runs\res128_beta_2.0 --beta2.0
+Epoch 38/40: train=125.155, val=123.074, recon=83.364, KL=20.895
+FID = 0.251834; Inception Score = 1.764824 (fixed-reference v2)
+Historical v1 FID = 0.181216; not directly comparable with v2 FID.
+
+6. python.exe" train.py --image-size 128 --latent-dim 32 --epochs 40 --seed 43 --out runs\res128_seed43_beta_0.5 --beta 0.5
+Epoch 40/40: train=79.208, val=81.583, recon=55.987, KL=46.442
+FID = 0.233361; Inception Score = 1.935209 (fixed-reference v2)
+Historical v1 FID = 0.157235; not directly comparable with v2 FID.
+
+7. train.py --image-size 128 --latent-dim 32 --epochs 40 --seed 43 --out runs\res128_seed43_beta_1.0 --beta 1.0
+Epoch 33/40: train=99.433, val=99.206, recon=67.563, KL=31.870
+FID = 0.276551; Inception Score = 1.918284 (fixed-reference v2)
+Historical v1 FID = 0.197736; not directly comparable with v2 FID.
+
+| Configuration | Seed | New FID ↓ | IS ↑ |
+|---|---:|---:|---:|
+| 64, latent 32, beta 1 | 42 | 0.235111 | 1.497146 |
+| 128, latent 32, beta 1 | 42 | 0.246205 | 1.839638 |
+| 128, latent 64, beta 1 | 42 | 0.245921 | 1.872313 |
+| 128, latent 32, beta 0.5 | 42 | 0.244042 | 1.933424 |
+| 128, latent 32, beta 2 | 42 | 0.251834 | 1.764824 |
+| **128, latent 32, beta 0.5** | **43** | **0.233361** | **1.935209** |
+| 128, latent 32, beta 1 | 43 | 0.276551 | 1.918284 |
+
+Resolution: 128 preserves more input detail, but has not shown a clear overall advantage over 64.
+Latent dimension: increasing from 32 to 64 produced little benefit.
+Beta: 0.5 improved the measured results over 1 in both training seeds.
+
+8. python sweep.py --parameter depth --values 3 5 --image-size 128 --latent-dim 32 --beta 0.5 --epochs 40 --seed 42 --prefix cnn128 --evaluate
+| Depth | Hidden channels | Final encoder feature map |
+|---|---|---|
+| 3 blocks | 16, 32, 64 | 16×16 |
+| **4 blocks—existing reference** | 16, 32, 64, 128 | 8×8 |
+| 5 blocks | 16, 32, 64, 128, 256 | 4×4 |
+FID = 0.214990; Inception Score = 1.954643 (3)
+FID = 0.278513; Inception Score = 1.967465 (5)
