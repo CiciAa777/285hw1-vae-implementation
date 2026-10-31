@@ -4,7 +4,6 @@
 
 Implement and train a convolutional VAE in PyTorch to generate chest X-rays.
 Experiments compare resolution, latent dimension, KL weight (beta), and CNN depth.
-NORMAL and PNEUMONIA images are pooled without labels.
 
 ## Structure
 
@@ -20,14 +19,6 @@ NORMAL and PNEUMONIA images are pooled without labels.
 | `tests/` | Architecture, resume, sweep, and evaluation checks |
 
 Dataset: [Kaggle Chest X-Ray Pneumonia](https://www.kaggle.com/datasets/paultimothymooney/chest-xray-pneumonia).
-Use the outer dataset copy:
-
-```text
-chest_xray/
-  train/{NORMAL,PNEUMONIA}/   # 5,216 images
-  val/{NORMAL,PNEUMONIA}/     # 16 images
-  test/{NORMAL,PNEUMONIA}/    # 624 images
-```
 
 ## Run
 ```
